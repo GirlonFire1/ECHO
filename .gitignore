@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite3
+*.sqlite
+
+# Node.js (Frontend)
+node_modules/
+npm-debug.log
+yarn-error.log
+dist/
+build/
+.cache/
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Project Specific (Scripts & Docs not for deployment)
+add_total_active_time_column.sql
+create_admin_user.py
+migrate_add_active_time.py
+init_postgres_db.py
+DEPLOYMENT.md
+PRESENTATION_GUIDE.md
+Project_Report_on_AI_CHATBOT.txt
+ProjectDCC
+CodeCanvas/.replit
+
+# Uploads
+uploads/

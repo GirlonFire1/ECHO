@@ -1,0 +1,132 @@
+ Prompt for Frontend AI Code Generation
+
+  Project Goal:
+  You are to create the complete frontend for a modern, real-time chat application using React. The application should have features similar to
+  WhatsApp, including user authentication, profile management, room-based chat, direct messaging, file sharing with upload progress, and room
+  administration.
+
+  Technology Stack:
+   * Framework: React (v18+) using functional components and Hooks.
+   * Build Tool: Vite.
+   * UI Library: Material-UI (MUI) for all UI components (buttons, modals, layout grids, etc.).
+   * State Management: Redux Toolkit for managing global state (user authentication, rooms, messages).
+   * Routing: React Router for page navigation.
+   * API Communication: axios for all HTTP requests.
+   * Styling: Use MUI's built-in styling solutions (e.g., sx prop, styled-components).
+
+  Project Structure:
+  Please generate the code in a standard React project structure:
+
+   1 /src
+   2 ├── /api           # Axios instances and API call functions
+   3 ├── /components    # Reusable UI components (Message, RoomListItem, etc.)
+   4 ├── /hooks         # Custom hooks (e.g., useWebSocket)
+   5 ├── /pages         # Top-level page components (LoginPage, ChatPage)
+   6 ├── /store         # Redux Toolkit slices and store configuration
+   7 ├── App.jsx
+   8 └── main.jsx
+
+  ---
+
+  Backend API Specification
+
+  The backend is a FastAPI application running at http://localhost:8000. All API endpoints are prefixed with /api/v1.
+
+  1. Authentication
+   * POST /auth/register: Creates a new user.
+       * Body: { "username": "str", "email": "str", "password": "str", "phone_number": "str" }
+   * POST /auth/login: Logs in a user.
+       * Body: FormData with username (can be email or username) and password.
+       * Response: { "access_token": "...", "token_type": "bearer" }.
+       * Flow: The frontend must store this token (e.g., in localStorage) and send it in the Authorization: Bearer <token> header for all subsequent
+         authenticated requests.
+
+  2. User & Profile Management
+   * GET /users/me: Get the current logged-in user's profile.
+   * PUT /users/me: Update the current user's profile.
+       * Body: { "username": "str", "email": "str", "bio": "str", "phone_number": "str" } (all optional).
+   * POST /users/upload-avatar: Upload a new avatar. This is a separate endpoint from the generic file upload.
+
+  3. File Uploads
+   * POST /uploads/: Generic endpoint for uploading files (images/videos) for messages.
+       * Body: FormData with a file key.
+       * Response: { "file_url": "/uploads/unique-filename.ext" }.
+       * Frontend Task: Use axios with the onUploadProgress event to track and display the upload percentage.
+
+  4. Rooms & Membership
+   * GET /rooms: Get a list of rooms the user can access.
+   * POST /rooms: Create a new room.
+   * GET /rooms/{room_id}: Get detailed information about a single room, including its member list.
+   * PUT /rooms/{room_id}: Update a room's details (name, description).
+   * DELETE /rooms/{room_id}: Delete a room.
+   * POST /rooms/{room_id}/join: Join a room.
+   * POST /rooms/{room_id}/leave: Leave a room.
+
+  5. Room Administration (Requires Room Admin Role)
+   * POST /rooms/{room_id}/members/{user_id}/promote: Make a member an admin.
+   * POST /rooms/{room_id}/members/{user_id}/demote: Revert an admin to a member.
+   * DELETE /rooms/{room_id}/members/{user_id}: Remove a member from the room.
+   * POST /rooms/{room_id}/transfer-ownership: Transfer the admin role to another user.
+       * Body: { "new_owner_id": "str" }
+
+  6. Messages
+   * GET /rooms/{room_id}/messages: Get message history for a room.
+   * DELETE /messages/{message_id}: Delete a message.
+       * Body: { "deletion_type": "for_me" | "for_everyone" }
+
+  7. WebSocket Real-time Communication
+   * Connection URL: ws://localhost:8000/ws/{room_id}?token=<jwt_token>
+   * Sending Messages: Messages sent from the client to the server should be a JSON string with this format:
+
+   1     {
+   2       "type": "message",
+   3       "content": "Hello world!", // Or a file_url for media
+   4       "message_type": "TEXT" // Or "IMAGE", "VIDEO"
+   5     }
+   * Receiving Messages: The client will receive various event types from the server, such as user_joined, user_left, message, message_updated,
+     message_deleted. The Redux store should be updated based on these events to reflect the changes in real-time.
+
+  ---
+
+  Frontend Page & Component Implementation Guide
+
+  1. Login Page (`/login`)
+   * Initial View: A single input field for "Email".
+   * Login Flow:
+       1. User enters their email and clicks "Continue".
+       2. The frontend makes a request to a (to-be-created) backend endpoint like POST /auth/check-email with the email.
+       3. If email exists: The UI should show the password field for the user to log in.
+       4. If email does not exist: The UI should pivot to a "Sign Up" form, showing fields for Username, Phone Number, and Password, while keeping
+          the email field pre-filled.
+   * Implement client-side validation for all fields (e.g., password length, valid email format).
+
+  2. Main Chat Page (`/`)
+   * This page should be protected, redirecting to /login if no valid auth token is present.
+   * Implement the three-column layout as described previously.
+
+       * Left Sidebar:
+           * A list of the user's rooms.
+           * A "Create Room" button that opens an MUI Modal Dialog with a form to create a new room.
+           * A user panel at the bottom showing their avatar and name. Clicking this should open a "Profile Settings" modal.
+
+       * Center Panel (Chat Window):
+           * Display the selected room's message history.
+           * Messages that are URLs ending in .jpg, .png, .mp4, etc., should be rendered as embedded images or video players.
+           * The message input box should have a "paperclip" icon button that opens the system file picker.
+           * Upload Flow: When a file is selected, it should immediately start uploading via the /uploads endpoint. An overlay or a placeholder in
+             the message list should appear showing the file name and a real-time upload progress bar. Once the upload is complete, the message
+             should be sent via WebSocket with the returned file_url.
+
+       * Right Sidebar (Member List):
+           * List all members of the current room.
+           * If the current user is an admin, each member item (except their own) should have a "three-dot" menu button.
+           * This menu should contain the actions: "Promote to Admin", "Demote to Member", and "Remove from Room".
+           * The room creator/owner should see an additional "Transfer Ownership" button at the top of this sidebar, which opens a modal to select a
+             new owner.
+
+  3. Profile Settings Modal
+   * This modal should allow the user to:
+       * Update their username, bio, and phone_number.
+       * Upload a new profile picture by clicking on their current avatar. This should use the /users/upload-avatar endpoint.
+
+  Please generate the complete, runnable React project based on these detailed instructions.
