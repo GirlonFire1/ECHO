@@ -1,22 +1,37 @@
 services:
   # Backend API Service
   - type: web
-    name: chat-room-backend
+    name: echo-backend
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
         fromDatabase:
-          name: chat-room-db
+          name: echo-db
           property: connectionString
       - key: SECRET_KEY
         generateValue: true
       - key: PYTHON_VERSION
         value: 3.11.0
-      
+  
+  # Frontend Static Site
+  - type: web
+    name: echo-frontend
+    env: node
+    buildCommand: cd CodeCanvas && npm install && npm run build
+    staticPublishPath: ./CodeCanvas/dist
+    envVars:
+      - key: NODE_VERSION
+        value: 18.17.0
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: echo-backend
+          property: url
+
 databases:
   # PostgreSQL Database
-  - name: chat-room-db
-    databaseName: chat_app
-    user: chat_user
+  - name: echo-db
+    databaseName: echo_app
+    user: echo_user
