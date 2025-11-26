@@ -16,6 +16,24 @@ from app.models.sql import User # SQL Model
 # Create directories if they don't exist
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 
+# Initialize FastAPI app
+app = FastAPI(title=settings.APP_NAME)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://echo-ex3m.onrender.com", # Production frontend URL
+        os.getenv("FRONTEND_URL", ""),
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Mount static files for uploads
 app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
