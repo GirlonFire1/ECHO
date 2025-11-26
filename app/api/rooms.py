@@ -1,10 +1,10 @@
 import random
 import string
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, desc
 
 from app.database.sql import get_db
 from app.core.security import get_current_active_user, is_room_admin
@@ -130,7 +130,7 @@ async def create_room(
     
     return room
 
-@router.get("/", response_model=List[RoomSchema])
+@router.get("/", response_model=List[dict])
 async def read_rooms(
     skip: int = 0,
     limit: int = 100,
@@ -148,7 +148,6 @@ async def read_rooms(
     else:
         # Show ONLY rooms where user is a member
         user_room_ids = [m.room_id for m in db.query(RoomMemberModel).filter(RoomMemberModel.user_id == current_user.id).all()]
-        
         query = query.filter(RoomModel.id.in_(user_room_ids))
 
     # Search filter
@@ -160,15 +159,44 @@ async def read_rooms(
             )
         )
     
-    rooms = query.offset(skip).limit(limit).all()
+    # Sort by last_activity descending
+    rooms = query.order_by(desc(RoomModel.last_activity)).offset(skip).limit(limit).all()
     
-    # Populate member_count manually
+    # Calculate has_unread for each room
+    rooms_data = []
     for room in rooms:
-        room.member_count = len(room.members)
-    
-    return rooms
+        # Convert to schema compatible dict/object
+        room_dict = {
+            "id": room.id,
+            "name": room.name,
+            "description": room.description,
+            "is_private": room.is_private,
+            "created_by": room.created_by,
+            "created_at": room.created_at,
+            "max_members": room.max_members,
+            "is_temporary": room.is_temporary,
+            "expires_at": room.expires_at,
+            "last_activity": room.last_activity,
+            "member_count": len(room.members),
+            "join_code": room.join_code
+        }
+        
+        # Check unread status
+        member = next((m for m in room.members if m.user_id == current_user.id), None)
+        if member and room.last_activity:
+            # If last_read_at is None, it's unread. If last_activity > last_read_at, it's unread.
+            if not member.last_read_at or room.last_activity > member.last_read_at:
+                room_dict["has_unread"] = True
+            else:
+                room_dict["has_unread"] = False
+        else:
+            room_dict["has_unread"] = False
+            
+        rooms_data.append(room_dict)
+        
+    return rooms_data
 
-@router.get("/{room_id}", response_model=RoomWithMembers)
+@router.get("/{room_id}", response_model=RoomSchema)
 async def read_room(
     room_id: str,
     current_user: UserModel = Depends(get_current_active_user),
@@ -189,32 +217,24 @@ async def read_room(
             RoomMemberModel.room_id == room_id,
             RoomMemberModel.user_id == current_user.id
         ).first()
+        
         if not member:
-            raise HTTPException(
+             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have permission to access this private room"
             )
+            
+    # Mark as read
+    member = db.query(RoomMemberModel).filter(
+        RoomMemberModel.room_id == room_id,
+        RoomMemberModel.user_id == current_user.id
+    ).first()
     
-    members = [m.user for m in room.members]
-    creator = room.creator
-    
-    response_data = {
-        "id": room.id,
-        "name": room.name,
-        "description": room.description,
-        "join_code": room.join_code,
-        "is_private": room.is_private,
-        "created_by": room.created_by,
-        "created_at": room.created_at,
-        "max_members": room.max_members,
-        "is_temporary": room.is_temporary,
-        "expires_at": room.expires_at,
-        "creator": creator,
-        "member_count": len(members),
-        "members": members
-    }
-    
-    return response_data
+    if member:
+        member.last_read_at = datetime.utcnow()
+        db.commit()
+            
+    return room
 
 @router.put("/{room_id}", response_model=RoomSchema)
 async def update_room(
@@ -256,7 +276,8 @@ async def delete_room(
             detail="Room not found"
         )
     
-    # Delete members first (cascade usually handles this but being explicit is safe)
+    # Delete members and messages first
+    db.query(MessageModel).filter(MessageModel.room_id == room_id).delete()
     db.query(RoomMemberModel).filter(RoomMemberModel.room_id == room_id).delete()
     db.delete(room)
     db.commit()

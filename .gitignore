@@ -47,4 +47,13 @@ ProjectDCC
 CodeCanvas/.replit
 
 # Uploads
-uploads/
+
+
+# Temporary Scripts
+debug_*.py
+fix_*.py
+migrate_*.py
+force_migration.py
+diagnose_simple.py
+verify_db_schema.py
+debug_output.txt

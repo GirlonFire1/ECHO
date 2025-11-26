@@ -341,7 +341,14 @@ export default function AdminDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans flex overflow-hidden">
+    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans flex overflow-hidden relative">
+      {/* Mobile Sidebar Overlay */}
+      {isSidebarOpen && (
+        <div
+          className="lg:hidden absolute inset-0 bg-black/50 z-40 backdrop-blur-sm transition-opacity"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
       {/* --- Sidebar --- */}
       <aside
         className={`fixed inset-y-0 left-0 z-50 bg-slate-900/80 backdrop-blur-xl border-r border-slate-800 transition-all duration-300 ease-in-out lg:relative 
@@ -355,6 +362,11 @@ export default function AdminDashboard() {
             <span className={`text-xl font-bold tracking-tight whitespace-nowrap transition-all duration-300 ${isSidebarOpen ? 'opacity-100 w-auto' : 'opacity-0 w-0 hidden'}`}>
               Echo Admin
             </span>
+            {isSidebarOpen && (
+              <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden ml-auto text-slate-400 hover:text-white">
+                <X size={20} />
+              </button>
+            )}
           </div>
 
           <nav className="space-y-2 flex-1">
@@ -365,7 +377,10 @@ export default function AdminDashboard() {
             ].map((item) => (
               <button
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
+                onClick={() => {
+                  setActiveTab(item.id);
+                  if (window.innerWidth < 1024) setIsSidebarOpen(false);
+                }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${activeTab === item.id
                   ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
                   : 'text-slate-400 hover:bg-slate-800 hover:text-white'

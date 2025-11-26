@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
 from app.database.sql import get_db
-from app.models.sql import User as UserModel
+from app.models.sql import User as UserModel, Message as MessageModel, RoomMember as RoomMemberModel, Room as RoomModel
 from app.schemas.user import User as UserSchema, UserUpdate, UserStatusUpdate
 from app.core.security import (
     get_current_active_user,
@@ -70,8 +70,13 @@ async def update_current_user(
             )
     
     # Update fields
-    db.commit()
-    db.refresh(current_user)
+    user_data = user_in.dict(exclude_unset=True)
+    for field, value in user_data.items():
+        if field == "password":
+            setattr(current_user, "hashed_password", get_password_hash(value))
+        else:
+            setattr(current_user, field, value)
+
     db.commit()
     db.refresh(current_user)
     return current_user
@@ -88,13 +93,54 @@ async def delete_current_user(
             detail="Admins cannot delete their own account."
         )
     
-    # Delete user
-    db.delete(current_user)
+    # Hard delete messages sent by user
+    db.query(MessageModel).filter(MessageModel.user_id == current_user.id).delete()
+    
+    # 1. Delete ALL rooms owned by the user (Group chats and DMs created by user)
+    # First, get all room IDs owned by the user
+    user_owned_rooms = db.query(RoomModel).filter(RoomModel.created_by == current_user.id).all()
+    user_owned_room_ids = [room.id for room in user_owned_rooms]
+    
+    if user_owned_room_ids:
+        # Delete all messages in these rooms (to avoid foreign key constraint failure)
+        db.query(MessageModel).filter(MessageModel.room_id.in_(user_owned_room_ids)).delete(synchronize_session=False)
+        # Delete all members in these rooms
+        db.query(RoomMemberModel).filter(RoomMemberModel.room_id.in_(user_owned_room_ids)).delete(synchronize_session=False)
+        # Now delete the rooms
+        db.query(RoomModel).filter(RoomModel.created_by == current_user.id).delete(synchronize_session=False)
+
+    # 2. Delete DMs where user is a member but NOT the owner (DMs created by others)
+    # Find private rooms user is in
+    user_private_room_ids = db.query(RoomMemberModel.room_id).join(RoomModel).filter(
+        RoomMemberModel.user_id == current_user.id,
+        RoomModel.is_private == True
+    ).all()
+    user_private_room_ids = [r[0] for r in user_private_room_ids]
+    
+    if user_private_room_ids:
+        for room_id in user_private_room_ids:
+            # Check if it's a DM (max_members=2 or actual count=2)
+            # We check actual count to be safe, or max_members if strictly enforced
+            room = db.query(RoomModel).filter(RoomModel.id == room_id).first()
+            if room and room.max_members == 2:
+                 db.delete(room)
+    
+    # 3. Remove from all other room memberships (Group chats where user is just a member)
+    db.query(RoomMemberModel).filter(
+        RoomMemberModel.user_id == current_user.id
+    ).delete()
+    
+    # Soft delete user
+    current_user.is_active = False
+    current_user.username = f"deleted_user_{current_user.id[:8]}"
+    current_user.email = f"deleted_{current_user.id}@deleted.local"
+    current_user.avatar_url = None
+    
     db.commit()
     return None
 
 @router.get("/{user_id}", response_model=UserSchema)
-async def read_user(
+async def read_user_by_id(
     user_id: str,
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db)
@@ -118,7 +164,9 @@ async def upload_avatar(
 ):
     """Upload user avatar"""
     # Validate file type
+    print(f"DEBUG: Uploading file with content_type: {file.content_type}")
     if file.content_type not in settings.ALLOWED_FILE_TYPES:
+        print(f"DEBUG: File type {file.content_type} not allowed. Allowed: {settings.ALLOWED_FILE_TYPES}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"File type {file.content_type} not allowed."

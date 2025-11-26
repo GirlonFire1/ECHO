@@ -14,13 +14,22 @@ services:
         generateValue: true
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: FRONTEND_URL
+        fromService:
+          type: web
+          name: echo-frontend
+          property: url
+    disk:
+      name: echo-uploads
+      mountPath: /opt/render/project/src/uploads
+      sizeGB: 1
   
   # Frontend Static Site
   - type: web
     name: echo-frontend
     env: node
     buildCommand: cd CodeCanvas && npm install && npm run build
-    staticPublishPath: ./CodeCanvas/dist
+    staticPublishPath: ./CodeCanvas/dist/public
     envVars:
       - key: NODE_VERSION
         value: 18.17.0

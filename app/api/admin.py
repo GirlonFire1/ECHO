@@ -206,7 +206,7 @@ async def delete_room(
     # but explicit deletion is safer if not sure.
     db.query(MessageModel).filter(MessageModel.room_id == room_id).delete()
     # RoomMember deletion might be needed too
-    # db.query(RoomMemberModel).filter(RoomMemberModel.room_id == room_id).delete()
+    db.query(RoomMemberModel).filter(RoomMemberModel.room_id == room_id).delete()
     
     db.delete(room)
     db.commit()

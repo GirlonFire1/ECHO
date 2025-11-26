@@ -3,6 +3,9 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import urllib.parse
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Database Configuration
 # Supports both MySQL (local) and PostgreSQL (production/Render)

@@ -7,6 +7,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -34,6 +44,7 @@ export default function ProfileSettingsModal({
   const [bio, setBio] = useState(currentUser.bio || "");
   const [phoneNumber, setPhoneNumber] = useState(currentUser.phone_number || "");
   const [status, setStatus] = useState(currentUser.status || "");
+  const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -79,18 +90,15 @@ export default function ProfileSettingsModal({
     }
   };
 
-  const handleDeleteAccount = async () => {
+  const handleDeleteClick = () => {
     if (currentUser.role === 'admin') {
       alert('Admins cannot delete their own account.');
       return;
     }
+    setIsDeleteAlertOpen(true);
+  };
 
-    const confirmed = confirm(
-      'Are you sure you want to delete your account? This action cannot be undone.'
-    );
-
-    if (!confirmed) return;
-
+  const confirmDeleteAccount = async () => {
     try {
       await deleteAccount();
       // Logout and redirect
@@ -227,7 +235,7 @@ export default function ProfileSettingsModal({
               <Button
                 type="button"
                 variant="destructive"
-                onClick={handleDeleteAccount}
+                onClick={handleDeleteClick}
                 className="bg-red-600/10 hover:bg-red-600/20 text-red-400 border border-red-600/20 flex items-center gap-2"
                 data-testid="button-delete-account"
               >
@@ -256,6 +264,28 @@ export default function ProfileSettingsModal({
           </form>
         </div>
       </DialogContent>
-    </Dialog>
+
+
+      <AlertDialog open={isDeleteAlertOpen} onOpenChange={setIsDeleteAlertOpen}>
+        <AlertDialogContent className="bg-slate-950 border-slate-800">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">Delete Account?</AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-400">
+              This action cannot be undone. This will permanently delete your account
+              and remove your data from our servers.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-slate-800 text-white border-slate-700 hover:bg-slate-700 hover:text-white">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteAccount}
+              className="bg-red-600 text-white hover:bg-red-700 border-0"
+            >
+              Delete Account
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Dialog >
   );
 }

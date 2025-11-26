@@ -15,11 +15,13 @@ async def upload_file(
     """Handle file uploads and return the file URL."""
     # Basic validation for content type can be done here if needed
     # For example, limit to images and videos
+    print(f"DEBUG: Uploading file with content_type: {file.content_type}")
     allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp", "video/mp4", "video/quicktime"]
     if file.content_type not in allowed_types:
+        print(f"DEBUG: File type {file.content_type} not allowed. Allowed: {allowed_types}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File type {file.content_type} not allowed."
+            detail=f"File type {file.content_type} not allowed. Got {file.content_type}"
         )
 
     # Ensure upload directory exists

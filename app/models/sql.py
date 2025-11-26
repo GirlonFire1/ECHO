@@ -41,6 +41,7 @@ class Room(Base):
     max_members = Column(Integer, nullable=True)
     is_temporary = Column(Boolean, default=False)
     expires_at = Column(DateTime, nullable=True)
+    last_activity = Column(DateTime, default=datetime.utcnow)
 
     creator = relationship("User", back_populates="rooms_created")
     messages = relationship("Message", back_populates="room")
@@ -54,6 +55,7 @@ class RoomMember(Base):
     user_id = Column(String(36), ForeignKey("users.id"))
     role = Column(String(50), default="member")
     joined_at = Column(DateTime, default=datetime.utcnow)
+    last_read_at = Column(DateTime, default=datetime.utcnow)
     is_muted = Column(Boolean, default=False)
     muted_until = Column(DateTime, nullable=True)
 
@@ -83,3 +85,16 @@ class SystemSetting(Base):
     value = Column(Text) # Store as JSON string or simple string
     is_enabled = Column(Boolean, default=True)
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+class HiddenMessage(Base):
+    __tablename__ = "hidden_messages"
+    
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    message_id = Column(String(36), ForeignKey("messages.id", ondelete="CASCADE"))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"))
+    hidden_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    message = relationship("Message")
+    user = relationship("User")
+

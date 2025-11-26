@@ -33,22 +33,22 @@ import GlobalSearch from "@/components/GlobalSearch";
 import {
   LogOut, Plus, Settings, Moon, Sun, Menu, X, Users,
   Copy, Check, MoreVertical, ChevronLeft, ChevronRight,
-  Hash, Lock, Globe, Download
+  Hash, Lock, Globe, Download, Trash2, AlertTriangle
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { getRooms, getRoom, createRoom, joinRoomByCode, createOrGetDM } from "../api/rooms";
-import { getMessages } from "../api/messages";
+import { getMessages, deleteMessage, clearRoomMessages } from "../api/messages";
 import { uploadFile } from "../api/uploads";
 import { searchUsers } from "../api/users";
-import { User, Room, Message } from "../types";
+import { User, Room, Message, RoomMember } from "../types";
 
 export default function ChatPage() {
   const { user: currentUser, logout } = useAuth();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [members, setMembers] = useState<User[]>([]);
+  const [members, setMembers] = useState<RoomMember[]>([]);
   const [isCreateRoomOpen, setIsCreateRoomOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isTransferOwnershipOpen, setIsTransferOwnershipOpen] = useState(false);
@@ -56,12 +56,13 @@ export default function ChatPage() {
   const [joinCodeDialogOpen, setJoinCodeDialogOpen] = useState(false);
   const [copiedJoinCode, setCopiedJoinCode] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [memberSidebarCollapsed, setMemberSidebarCollapsed] = useState(false);
+  const [showRoomInfo, setShowRoomInfo] = useState(false); // Default hidden
   const [isRoomSettingsOpen, setIsRoomSettingsOpen] = useState(false);
   const [roomDescription, setRoomDescription] = useState("");
   const [isRegeneratingCode, setIsRegeneratingCode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<User[]>([]);
+  const [isClearChatOpen, setIsClearChatOpen] = useState(false);
   const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -95,10 +96,10 @@ export default function ChatPage() {
     const handleResize = () => {
       if (window.innerWidth < 1024) {
         setSidebarCollapsed(true);
-        setMemberSidebarCollapsed(true);
+        setShowRoomInfo(false);
       } else {
         setSidebarCollapsed(false);
-        setMemberSidebarCollapsed(false);
+        // Don't auto-show room info on large screens, keep it hidden by default as requested
       }
     };
 
@@ -153,7 +154,7 @@ export default function ChatPage() {
       // Close sidebars on mobile when room is selected
       if (window.innerWidth < 1024) {
         setSidebarCollapsed(true);
-        setMemberSidebarCollapsed(true);
+        setShowRoomInfo(false);
       }
     } catch (error) {
       console.error("Error selecting room:", error);
@@ -188,8 +189,15 @@ export default function ChatPage() {
     }
   };
 
-  const handleCreateRoom = async (roomData: any) => {
+  const handleCreateRoom = async (name: string, description: string, isTemporary: boolean, expiresAt: string | undefined) => {
     try {
+      const roomData = {
+        name,
+        description,
+        is_temporary: isTemporary,
+        expires_at: expiresAt,
+        is_private: false, // Default
+      };
       const newRoom = await createRoom(roomData);
       setRooms([...rooms, newRoom]);
       setIsCreateRoomOpen(false);
@@ -274,10 +282,49 @@ export default function ChatPage() {
     }
   };
 
+  const handleDeleteMessage = async (messageId: string, deletionType: "for_me" | "for_everyone") => {
+    try {
+      await deleteMessage(messageId, deletionType);
+
+      // Optimistic update
+      if (deletionType === "for_me") {
+        setMessages(prev => prev.filter(m => m.id !== messageId));
+      }
+      // For "for_everyone", the websocket will handle the update
+    } catch (error) {
+      console.error("Failed to delete message:", error);
+      alert("Failed to delete message");
+    }
+  };
+
+  const handleClearChat = () => {
+    if (!selectedRoom) return;
+    setIsClearChatOpen(true);
+  };
+
+  const confirmClearChat = async () => {
+    if (!selectedRoom) return;
+    try {
+      await clearRoomMessages(selectedRoom.id);
+      setMessages([]);
+      setIsClearChatOpen(false);
+    } catch (error) {
+      console.error("Failed to clear chat:", error);
+    }
+  };
+
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100">
+    <div className="flex h-screen bg-slate-950 text-slate-100 relative overflow-hidden">
+      {/* Mobile Sidebar Overlay */}
+      {!sidebarCollapsed && (
+        <div
+          className="lg:hidden absolute inset-0 bg-black/50 z-20 backdrop-blur-sm transition-opacity"
+          onClick={() => setSidebarCollapsed(true)}
+        />
+      )}
+
       {/* Left Sidebar - Rooms */}
-      <div className={`${sidebarCollapsed ? 'w-0' : 'w-72'} border-r border-slate-800 flex flex-col transition-all duration-300 overflow-hidden`}>
+      <div className={`${sidebarCollapsed ? '-translate-x-full w-0' : 'translate-x-0 w-72'} lg:translate-x-0 ${sidebarCollapsed ? 'lg:w-0' : 'lg:w-72'} border-r border-slate-800 flex flex-col transition-all duration-300 absolute lg:relative z-30 h-full bg-slate-950 shadow-2xl lg:shadow-none overflow-hidden`}>
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Hash className="w-5 h-5 text-blue-400" />
@@ -329,7 +376,7 @@ export default function ChatPage() {
                       <Avatar className="w-8 h-8">
                         <AvatarImage src={user.avatar_url ? `http://localhost:8000${user.avatar_url}` : undefined} />
                         <AvatarFallback className="bg-blue-600 text-xs">
-                          {user.username.slice(0, 2).toUpperCase()}
+                          {(user.username || "?").slice(0, 2).toUpperCase()}
                         </AvatarFallback>
                       </Avatar>
                       <div className="flex-1 min-w-0">
@@ -349,21 +396,37 @@ export default function ChatPage() {
               rooms.map((room) => (
                 <div
                   key={room.id}
-                  onClick={() => selectRoom(room.id)}
+                  onClick={() => {
+                    selectRoom(room.id);
+                    // Optimistically mark as read
+                    setRooms(prev => prev.map(r => r.id === room.id ? { ...r, has_unread: false } : r));
+                  }}
                   className={`p-3 rounded-lg cursor-pointer transition-all ${selectedRoom?.id === room.id
                     ? 'bg-blue-600/20 border border-blue-500/50'
                     : 'hover:bg-slate-800/50 border border-transparent'
                     }`}
                 >
                   <div className="flex items-center gap-2">
-                    {room.is_private ? (
-                      <Lock className="w-4 h-4 text-amber-400" />
-                    ) : (
-                      <Globe className="w-4 h-4 text-green-400" />
-                    )}
+                    <div className="relative">
+                      {room.is_private ? (
+                        <Lock className="w-4 h-4 text-amber-400" />
+                      ) : (
+                        <Globe className="w-4 h-4 text-green-400" />
+                      )}
+                      {room.has_unread && (
+                        <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-slate-950"></span>
+                      )}
+                    </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{room.name}</div>
-                      <div className="text-xs text-slate-400 truncate">
+                      <div className="flex justify-between items-center">
+                        <div className={`font-medium truncate ${room.has_unread ? 'text-white font-bold' : ''}`}>{room.name}</div>
+                        {room.last_activity && (
+                          <div className="text-[10px] text-slate-500">
+                            {new Date(room.last_activity).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        )}
+                      </div>
+                      <div className={`text-xs truncate ${room.has_unread ? 'text-slate-300' : 'text-slate-400'}`}>
                         {room.member_count || 0} members
                       </div>
                     </div>
@@ -379,7 +442,7 @@ export default function ChatPage() {
             <Avatar className="w-8 h-8">
               <AvatarImage src={currentUser?.avatar_url ? `http://localhost:8000${currentUser.avatar_url}` : undefined} />
               <AvatarFallback className="bg-blue-600 text-xs">
-                {currentUser?.username?.slice(0, 2).toUpperCase()}
+                {(currentUser?.username || "?").slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
@@ -413,7 +476,7 @@ export default function ChatPage() {
         <Button
           size="sm"
           variant="ghost"
-          className="absolute left-2 top-4 z-10"
+          className="absolute left-2 top-4 z-10 lg:z-0"
           onClick={() => setSidebarCollapsed(false)}
         >
           <ChevronRight className="w-4 h-4" />
@@ -425,17 +488,19 @@ export default function ChatPage() {
         {selectedRoom ? (
           <>
             {/* Chat Header */}
-            <div className="h-16 border-b border-slate-800 flex items-center justify-between px-6">
-              <div className="flex items-center gap-3">
+            <div className="h-16 border-b border-slate-800 flex items-center justify-between px-4 lg:px-6">
+              <div className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity" onClick={() => setShowRoomInfo(!showRoomInfo)}>
                 <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold">
                   {selectedRoom.name.charAt(0).toUpperCase()}
                 </div>
                 <div>
                   <h1 className="font-semibold text-lg">{selectedRoom.name}</h1>
-                  <div className="text-xs text-slate-400 flex items-center gap-2">
-                    <Users className="w-3 h-3" />
-                    {members.length} members
-                  </div>
+                  {!selectedRoom.is_private && (
+                    <div className="text-xs text-slate-400 flex items-center gap-2">
+                      <Users className="w-3 h-3" />
+                      {members.length} members
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -451,7 +516,7 @@ export default function ChatPage() {
                   ) : (
                     <Copy className="w-4 h-4" />
                   )}
-                  {copiedJoinCode ? 'Copied!' : `Code: ${selectedRoom.join_code}`}
+                  <span className="hidden sm:inline">{copiedJoinCode ? 'Copied!' : `Code: ${selectedRoom.join_code}`}</span>
                 </Button>
 
                 <DropdownMenu>
@@ -468,6 +533,10 @@ export default function ChatPage() {
                     <DropdownMenuItem>
                       <Users className="w-4 h-4 mr-2" />
                       Invite Members
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleClearChat} className="text-red-400">
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Clear Chat
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem className="text-red-400">
@@ -502,70 +571,21 @@ export default function ChatPage() {
                         key={msg.id || idx}
                         className={`flex gap-3 ${isCurrentUser ? 'flex-row-reverse' : ''} ${isSequence ? 'mt-1' : 'mt-4'}`}
                       >
-                        <div className="w-8 flex-shrink-0 flex flex-col items-center">
-                          {!isSequence ? (
-                            <Avatar className="w-8 h-8">
-                              <AvatarImage src={msg.user?.avatar_url ? `http://localhost:8000${msg.user.avatar_url}` : undefined} />
-                              <AvatarFallback className={`text-xs ${isCurrentUser ? 'bg-blue-600' : 'bg-slate-700'}`}>
-                                {msg.sender_name?.slice(0, 2).toUpperCase() || msg.user?.username?.slice(0, 2).toUpperCase() || currentUser?.username?.slice(0, 2).toUpperCase() || 'U'}
-                              </AvatarFallback>
-                            </Avatar>
-                          ) : (
-                            <div className="w-8" /> // Spacer for alignment
-                          )}
-                        </div>
-
-                        <div className={`flex flex-col gap-1 max-w-[70%] ${isCurrentUser ? 'items-end' : 'items-start'}`}>
-                          {!isSequence && (
-                            <div className="text-xs text-slate-400 ml-1">
-                              {msg.sender_name || msg.user?.username || (isCurrentUser ? currentUser?.username : 'Unknown')}
-                            </div>
-                          )}
-
-                          {isImage ? (
-                            <div className="rounded-xl overflow-hidden max-w-md border border-slate-800 relative group">
-                              <img
-                                src={`http://localhost:8000${msg.content}`}
-                                alt="Uploaded image"
-                                className="w-full h-auto cursor-pointer"
-                                onClick={() => window.open(`http://localhost:8000${msg.content}`, '_blank')}
-                                onError={(e) => {
-                                  const target = e.currentTarget as HTMLImageElement;
-                                  target.style.display = 'none';
-                                  const nextSibling = target.nextElementSibling as HTMLElement;
-                                  if (nextSibling) nextSibling.style.display = 'block';
-                                }}
-                              />
-                              <div className="hidden px-4 py-2 rounded-2xl bg-slate-800 text-slate-100">
-                                Image failed to load: {msg.content}
-                              </div>
-                              <a
-                                href={`http://localhost:8000${msg.content}`}
-                                download
-                                className="absolute bottom-2 right-2 p-2 bg-black/50 hover:bg-black/70 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Download"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <Download className="w-4 h-4" />
-                              </a>
-                            </div>
-                          ) : (
-                            <div className={`px-4 py-2 rounded-2xl ${isCurrentUser
-                              ? 'bg-blue-600 text-white rounded-tr-none'
-                              : 'bg-slate-800 text-slate-100 rounded-tl-none'
-                              }`}>
-                              {msg.content}
-                            </div>
-                          )}
-
-                          {/* Only show timestamp for last message in sequence or on hover (optional) */}
-                          {(!messages[idx + 1] || messages[idx + 1].user_id !== msg.user_id) && (
-                            <div className="text-[10px] text-slate-500 opacity-70 mt-1">
-                              {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </div>
-                          )}
+                        <div className="w-full">
+                          <MessageBubble
+                            id={msg.id}
+                            content={msg.content}
+                            messageType={msg.message_type === 'image' ? 'IMAGE' : msg.message_type === 'video' ? 'VIDEO' : 'TEXT'}
+                            senderName={msg.sender_name || msg.user?.username || 'Unknown'}
+                            senderId={msg.user_id}
+                            senderStatus={msg.user?.status}
+                            timestamp={new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            isSent={isCurrentUser}
+                            onDelete={handleDeleteMessage}
+                          />
                         </div>
                       </div>
+
                     );
                   })
                 )}
@@ -590,54 +610,53 @@ export default function ChatPage() {
         )}
       </div>
 
-      {/* Right Sidebar - Members */}
-      {selectedRoom && (
-        <div className={`${memberSidebarCollapsed ? 'w-0' : 'w-64'} border-l border-slate-800 flex flex-col transition-all duration-300 overflow-hidden`}>
-          <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Users className="w-5 h-5 text-purple-400" />
-              <h2 className="font-semibold">Members</h2>
-            </div>
-            <Button size="sm" variant="ghost" onClick={() => setMemberSidebarCollapsed(true)}>
-              <ChevronRight className="w-4 h-4" />
-            </Button>
-          </div>
-
-          <ScrollArea className="flex-1 p-3">
-            <div className="space-y-2">
-              {members.map((member) => (
-                <div key={member.id} className="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-800/50 group">
-                  <Avatar className="w-8 h-8">
-                    <AvatarImage src={member.avatar_url ? `http://localhost:8000${member.avatar_url}` : undefined} />
-                    <AvatarFallback className="bg-slate-700 text-xs">
-                      {member.username.slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate text-sm">{member.username}</div>
-                    {member.status && (
-                      <div className="text-xs text-slate-400 truncate">{member.status}</div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </ScrollArea>
-        </div>
-      )}
-
-
-      {/* Collapsed Member Sidebar Trigger */}
+      {/* Right Sidebar - Room Info (Drawer style) */}
       {
-        memberSidebarCollapsed && selectedRoom && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="absolute right-2 top-4 z-10"
-            onClick={() => setMemberSidebarCollapsed(false)}
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
+        selectedRoom && showRoomInfo && !selectedRoom.is_private && (
+          <div className="w-80 border-l border-slate-800 flex flex-col transition-all duration-300 bg-slate-950 absolute right-0 h-full z-20 shadow-2xl">
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
+              <div className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-purple-400" />
+                <h2 className="font-semibold">Room Info</h2>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setShowRoomInfo(false)}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+
+            <div className="p-6 text-center border-b border-slate-800">
+              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-3xl font-bold mx-auto mb-3 shadow-lg">
+                {selectedRoom.name.charAt(0).toUpperCase()}
+              </div>
+              <h2 className="text-xl font-bold">{selectedRoom.name}</h2>
+              <p className="text-sm text-slate-400 mt-1">{selectedRoom.description || "No description"}</p>
+            </div>
+
+            <div className="p-4">
+              <h3 className="text-sm font-semibold text-slate-400 mb-3 uppercase tracking-wider">Members ({members.length})</h3>
+              <ScrollArea className="h-[calc(100vh-350px)]">
+                <div className="space-y-2">
+                  {members.map((member) => (
+                    <div key={member.user_id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-800/50 group transition-colors">
+                      <Avatar className="w-10 h-10">
+                        <AvatarImage src={member.user?.avatar_url ? `http://localhost:8000${member.user.avatar_url}` : undefined} />
+                        <AvatarFallback className="bg-slate-700 text-sm">
+                          {(member.user?.username || "?").slice(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium truncate text-sm">{member.user?.username || "Unknown User"}</div>
+                        {member.user?.status && (
+                          <div className="text-xs text-slate-400 truncate">{member.user.status}</div>
+                        )}
+                        <div className="text-[10px] text-slate-500 capitalize">{member.role}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </div>
+          </div>
         )
       }
 
@@ -722,6 +741,33 @@ export default function ChatPage() {
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
               Save Changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Clear Chat Confirmation Dialog */}
+      <AlertDialog open={isClearChatOpen} onOpenChange={setIsClearChatOpen}>
+        <AlertDialogContent className="bg-slate-900 border-slate-700 shadow-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-slate-100">Clear Chat?</AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-400">
+              Are you sure you want to clear this chat? This will hide all messages for you. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsClearChatOpen(false)}
+              className="bg-slate-800 border-slate-600 hover:bg-slate-700 text-slate-300"
+            >
+              Cancel
+            </Button>
+            <AlertDialogAction
+              onClick={confirmClearChat}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              Clear Chat
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

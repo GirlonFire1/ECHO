@@ -31,13 +31,13 @@ export default function MessageBubble({
   isSent,
   onDelete,
 }: MessageBubbleProps) {
-  const [showActions, setShowActions] = useState(false);
+  // const [showActions, setShowActions] = useState(false); // Removed in favor of CSS group-hover
 
   const renderContent = () => {
     if (messageType === "IMAGE") {
       return (
         <img
-          src={content}
+          src={content.startsWith('/uploads/') ? `http://localhost:8000${content}` : content}
           alt="Shared image"
           className="max-w-xs rounded-lg cursor-pointer hover-elevate"
           onClick={() => console.log("Open image lightbox")}
@@ -66,9 +66,7 @@ export default function MessageBubble({
 
   return (
     <div
-      className={`flex gap-2 ${isSent ? "justify-end" : "justify-start"}`}
-      onMouseEnter={() => setShowActions(true)}
-      onMouseLeave={() => setShowActions(false)}
+      className={`flex gap-2 ${isSent ? "justify-end" : "justify-start"} group`}
     >
       {!isSent && (
         <Avatar className="h-8 w-8 flex-shrink-0">
@@ -79,22 +77,21 @@ export default function MessageBubble({
       )}
 
       <div
-        className={`max-w-md rounded-2xl p-3 ${
-          isSent
-            ? "bg-primary/10 rounded-br-sm ml-auto"
-            : "bg-card rounded-bl-sm mr-auto"
-        }`}
+        className={`max-w-md rounded-2xl p-3 ${isSent
+          ? "bg-primary/10 rounded-br-sm ml-auto"
+          : "bg-slate-800 rounded-bl-sm mr-auto text-slate-200"
+          }`}
       >
         {!isSent && (
           <p className="text-xs font-medium mb-1 text-primary">{senderName}</p>
         )}
         {senderStatus && !isSent && (
-            <p className="text-xs text-muted-foreground mb-1">{senderStatus}</p>
+          <p className="text-xs text-muted-foreground mb-1">{senderStatus}</p>
         )}
         {renderContent()}
-        <div className="flex items-center justify-between gap-2 mt-1">
+        <div className="flex items-center justify-between gap-2 mt-1 min-h-[24px]">
           <p className="text-xs opacity-70">{timestamp}</p>
-          {showActions && (
+          <div className="opacity-0 group-hover:opacity-100 transition-opacity">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -124,7 +121,7 @@ export default function MessageBubble({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-          )}
+          </div>
         </div>
       </div>
     </div>

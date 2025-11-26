@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, 
 from datetime import datetime
 import json
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, and_
 
 from app.database.sql import get_db
 from app.core.security import get_current_active_user, is_moderator_or_admin, is_admin
@@ -22,7 +22,7 @@ from app.schemas.message import (
 from app.models.sql import (
     Message as MessageModel, 
     Room as RoomModel, RoomMember as RoomMemberModel,
-    User as UserModel
+    User as UserModel, HiddenMessage as HiddenMessageModel
 )
 from app.config import settings
 from app.core.websocket_manager import manager
@@ -62,7 +62,17 @@ async def read_messages(
                 detail="You don't have permission to access this private room"
             )
             
-    query = db.query(MessageModel).filter(MessageModel.room_id == room_id)
+    # Build query with hidden messages filter
+    query = db.query(MessageModel).outerjoin(
+        HiddenMessageModel,
+        and_(
+            HiddenMessageModel.message_id == MessageModel.id,
+            HiddenMessageModel.user_id == current_user.id
+        )
+    ).filter(
+        MessageModel.room_id == room_id,
+        HiddenMessageModel.id == None  # Only messages NOT hidden by this user
+    )
     
     if before_timestamp:
         query = query.filter(MessageModel.created_at < before_timestamp)
@@ -125,21 +135,30 @@ async def create_message(
         user_id=current_user.id,
         room_id=room_id,
         message_type=message_in.message_type,
-        is_encrypted=is_encrypted,
+        is_encrypted=is_encrypted
     )
     
     db.add(message)
+    
+    # Update room activity
+    room.last_activity = datetime.utcnow()
+    
     db.commit()
     db.refresh(message)
     
+    # Prepare message data for websocket
     msg_data = {
-        "type": "message",
-        "message_id": str(message.id),
-        "content": content,
+        "id": message.id,
+        "content": message.content,
         "user_id": str(current_user.id),
+        "room_id": room_id,
         "message_type": message_in.message_type,
         "created_at": message.created_at.isoformat(),
-        "is_encrypted": is_encrypted
+        "is_encrypted": is_encrypted,
+        "user": {
+            "username": current_user.username,
+            "avatar_url": current_user.avatar_url
+        }
     }
     
     await manager.broadcast_to_room(
@@ -225,6 +244,20 @@ async def delete_message(
         )
     
     if deletion_type == DeletionType.FOR_ME:
+        # Create hidden message record
+        existing = db.query(HiddenMessageModel).filter(
+            HiddenMessageModel.message_id == message_id,
+            HiddenMessageModel.user_id == current_user.id
+        ).first()
+        
+        if not existing:
+            hidden_msg = HiddenMessageModel(
+                message_id=message_id,
+                user_id=current_user.id
+            )
+            db.add(hidden_msg)
+            db.commit()
+
         await manager.send_personal_message(
             user_id=str(current_user.id),
             room_id=str(message.room_id),
@@ -246,3 +279,50 @@ async def delete_message(
         )
     
     return {"message": "Message deleted successfully", "deletion_type": str(deletion_type)}
+
+@router.delete("/rooms/{room_id}/messages/clear")
+async def clear_room_messages(
+    room_id: str,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Hide all messages in a room for the current user"""
+    
+    # Verify room exists
+    room = db.query(RoomModel).filter(RoomModel.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Check membership for private rooms
+    if room.is_private:
+        member = db.query(RoomMemberModel).filter(
+            RoomMemberModel.room_id == room_id,
+            RoomMemberModel.user_id == current_user.id
+        ).first()
+        if not member:
+            raise HTTPException(status_code=403, detail="Not a member of this room")
+
+    # Get all message IDs in this room
+    message_ids = db.query(MessageModel.id).filter(
+        MessageModel.room_id == room_id
+    ).all()
+    
+    count = 0
+    # Create hidden_message records for messages not already hidden
+    for (msg_id,) in message_ids:
+        existing = db.query(HiddenMessageModel).filter(
+            HiddenMessageModel.message_id == msg_id,
+            HiddenMessageModel.user_id == current_user.id
+        ).first()
+        
+        if not existing:
+            hidden_msg = HiddenMessageModel(
+                message_id=msg_id,
+                user_id=current_user.id
+            )
+            db.add(hidden_msg)
+            count += 1
+    
+    db.commit()
+    
+    return {"message": f"Cleared {count} messages from room"}

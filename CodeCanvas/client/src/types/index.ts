@@ -12,6 +12,15 @@ export interface User {
     role: "regular" | "moderator" | "admin";
 }
 
+export interface RoomMember {
+    user_id: string;
+    room_id: string;
+    role: "member" | "admin" | "moderator";
+    joined_at?: string;
+    last_read_at?: string;
+    user?: User;
+}
+
 export interface Room {
     id: string;
     name: string;
@@ -23,8 +32,10 @@ export interface Room {
     max_members: number | null;
     is_temporary: boolean;
     expires_at: string | null;
+    last_activity?: string;
+    has_unread?: boolean;
     member_count?: number;
-    members?: User[];
+    members?: RoomMember[];
     creator?: User;
 }
 

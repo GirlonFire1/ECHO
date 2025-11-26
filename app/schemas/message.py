@@ -62,6 +62,7 @@ class MessageInDBBase(MessageBase):
 
 # Properties to return to client
 class Message(MessageInDBBase):
+    user_id: Optional[str] = None # Override to allow None for deleted users
     user: Optional[User] = None # Sender
     reaction_count: int = 0
 
