@@ -100,30 +100,23 @@ async def health():
     }
 
 @app.on_event("startup")
-async def startup_db_client():
-    # Create tables
-    Base.metadata.create_all(bind=engine)
-    
-    # Create a default admin user if one doesn't exist
+def create_admin_on_startup():
     db = SessionLocal()
     try:
+        # Check if admin user exists
         admin_user = db.query(User).filter(User.email == "admin@example.com").first()
         if not admin_user:
+            # Create admin user
+            hashed_password = get_password_hash("adminpassword")
             new_admin = User(
                 username="admin",
                 email="admin@example.com",
-                password_hash=get_password_hash("adminpassword"),
-                role="admin"
+                password_hash=hashed_password,
+                is_active=True,
+                role="admin"  # Assuming 'role' field exists
             )
             db.add(new_admin)
             db.commit()
-            db.add(new_admin)
-            db.commit()
-            print("Default admin user created.")
-            
+            print("Default admin user created successfully.")
     finally:
         db.close()
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    pass
