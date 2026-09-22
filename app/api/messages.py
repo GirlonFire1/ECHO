@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Any
+﻿from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query, Body
 from datetime import datetime
 import json
@@ -9,8 +9,8 @@ from app.database.sql import get_db
 from app.core.security import get_current_active_user, is_moderator_or_admin, is_admin
 from app.core.moderation import profanity_filter, rate_limiter
 from app.schemas.message import (
-    MessageCreate, MessageUpdate, 
-    MessageWithReactions, MessageReportCreate, 
+    MessageCreate, MessageUpdate,
+    MessageWithReactions, MessageReportCreate,
     BroadcastMessageCreate, DeleteMessageRequest,
     MessageWithReadReceipts,
     MessageType, DeletionType,
@@ -20,7 +20,7 @@ from app.schemas.message import (
     MessageReadReceipt as MessageReadReceiptSchema
 )
 from app.models.sql import (
-    Message as MessageModel, 
+    Message as MessageModel,
     Room as RoomModel, RoomMember as RoomMemberModel,
     User as UserModel, HiddenMessage as HiddenMessageModel
 )
@@ -29,9 +29,6 @@ from app.core.websocket_manager import manager
 
 router = APIRouter()
 
-# Background task to deliver scheduled messages - Simplified for SQL
-async def deliver_scheduled_message(message_id: str, db: Session):
-    pass
 
 @router.get("/rooms/{room_id}/messages", response_model=List[MessageSchema])
 async def read_messages(
@@ -43,26 +40,19 @@ async def read_messages(
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get messages in a room with pagination"""
     room = db.query(RoomModel).filter(RoomModel.id == room_id).first()
     if not room:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Room not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
+
     if room.is_private:
         member = db.query(RoomMemberModel).filter(
             RoomMemberModel.room_id == room_id,
             RoomMemberModel.user_id == current_user.id
         ).first()
         if not member:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to access this private room"
-            )
-            
-    # Build query with hidden messages filter
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You don't have permission to access this private room")
+
+    # Build query, filtering out messages hidden by this user
     query = db.query(MessageModel).outerjoin(
         HiddenMessageModel,
         and_(
@@ -71,17 +61,17 @@ async def read_messages(
         )
     ).filter(
         MessageModel.room_id == room_id,
-        HiddenMessageModel.id == None  # Only messages NOT hidden by this user
+        HiddenMessageModel.id == None
     )
-    
+
     if before_timestamp:
         query = query.filter(MessageModel.created_at < before_timestamp)
     if after_timestamp:
         query = query.filter(MessageModel.created_at > after_timestamp)
-        
+
     messages = query.order_by(desc(MessageModel.created_at)).offset(skip).limit(limit).all()
-    
     return messages
+
 
 @router.post("/rooms/{room_id}/messages", response_model=MessageSchema)
 async def create_message(
@@ -91,45 +81,31 @@ async def create_message(
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Create a new message in a room"""
     room = db.query(RoomModel).filter(RoomModel.id == room_id).first()
     if not room:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Room not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
+
     member = db.query(RoomMemberModel).filter(
         RoomMemberModel.room_id == room_id,
         RoomMemberModel.user_id == current_user.id
     ).first()
-    
     if not member:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not a member of this room"
-        )
-        
-    # Check rate limiting
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not a member of this room")
+
+    # Check rate limit
     if not rate_limiter.check_rate_limit(current_user.id, settings.RATE_LIMIT_MESSAGES_PER_MINUTE):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Rate limit exceeded. Maximum {settings.RATE_LIMIT_MESSAGES_PER_MINUTE} messages per minute."
-        )
-    
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"Rate limit exceeded. Maximum {settings.RATE_LIMIT_MESSAGES_PER_MINUTE} messages per minute.")
+
     is_encrypted = message_in.message_type == MessageType.ENCRYPTED
     content = message_in.content
-    
+
     if not is_encrypted:
         if len(content) > settings.MAX_MESSAGE_LENGTH:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Message too long. Maximum {settings.MAX_MESSAGE_LENGTH} characters allowed."
-            )
-        
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Message too long. Maximum {settings.MAX_MESSAGE_LENGTH} characters allowed.")
+
         if profanity_filter.contains_profanity(content):
             content = profanity_filter.censor_text(content)
-            
+
     message = MessageModel(
         content=content,
         user_id=current_user.id,
@@ -137,16 +113,14 @@ async def create_message(
         message_type=message_in.message_type,
         is_encrypted=is_encrypted
     )
-    
     db.add(message)
-    
+
     # Update room activity
     room.last_activity = datetime.utcnow()
-    
+
     db.commit()
     db.refresh(message)
-    
-    # Prepare message data for websocket
+
     msg_data = {
         "id": message.id,
         "content": message.content,
@@ -160,13 +134,10 @@ async def create_message(
             "avatar_url": current_user.avatar_url
         }
     }
-    
-    await manager.broadcast_to_room(
-        room_id=room_id,
-        message=msg_data
-    )
-    
+
+    await manager.broadcast_to_room(room_id=room_id, message=msg_data)
     return message
+
 
 @router.put("/messages/{message_id}", response_model=MessageSchema)
 async def update_message(
@@ -175,36 +146,26 @@ async def update_message(
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Update a message (owner only)"""
     message = db.query(MessageModel).filter(MessageModel.id == message_id).first()
     if not message:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Message not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+
     if message.user_id != current_user.id:
         if current_user.role not in ["admin", "moderator"]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to edit this message"
-            )
-            
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You don't have permission to edit this message")
+
     content = message_in.content
     if len(content) > settings.MAX_MESSAGE_LENGTH:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Message too long. Maximum {settings.MAX_MESSAGE_LENGTH} characters allowed."
-        )
-    
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Message too long. Maximum {settings.MAX_MESSAGE_LENGTH} characters allowed.")
+
     if profanity_filter.contains_profanity(content):
         content = profanity_filter.censor_text(content)
-        
+
     message.content = content
     message.edited_at = datetime.utcnow()
     db.commit()
     db.refresh(message)
-    
+
     await manager.broadcast_to_room(
         room_id=str(message.room_id),
         message={
@@ -214,8 +175,9 @@ async def update_message(
             "edited_at": message.edited_at.isoformat()
         }
     )
-    
+
     return message
+
 
 @router.delete("/messages/{message_id}")
 async def delete_message(
@@ -224,61 +186,48 @@ async def delete_message(
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Delete a message"""
     message = db.query(MessageModel).filter(MessageModel.id == message_id).first()
     if not message:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Message not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+
     deletion_type = deletion_request.deletion_type if deletion_request else DeletionType.FOR_ME
-    
+
     is_admin_or_mod = current_user.role in ["admin", "moderator"]
     is_owner = str(message.user_id) == str(current_user.id)
-    
+
     if deletion_type == DeletionType.FOR_EVERYONE and not (is_owner or is_admin_or_mod):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to delete this message for everyone"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You don't have permission to delete this message for everyone")
+
     if deletion_type == DeletionType.FOR_ME:
-        # Create hidden message record
+        # Create a hidden message record for this user
         existing = db.query(HiddenMessageModel).filter(
             HiddenMessageModel.message_id == message_id,
             HiddenMessageModel.user_id == current_user.id
         ).first()
-        
+
         if not existing:
-            hidden_msg = HiddenMessageModel(
-                message_id=message_id,
-                user_id=current_user.id
-            )
+            hidden_msg = HiddenMessageModel(message_id=message_id, user_id=current_user.id)
             db.add(hidden_msg)
             db.commit()
 
         await manager.send_personal_message(
             user_id=str(current_user.id),
             room_id=str(message.room_id),
-            message={
-                "type": "message_deleted",
-                "message_id": message_id,
-                "deletion_type": str(deletion_type)
-            }
+            message={"type": "message_deleted", "message_id": message_id, "deletion_type": str(deletion_type)}
         )
-    else: # FOR_EVERYONE
+    else:
         db.delete(message)
         db.commit()
-        
+
         await manager.notify_message_deleted(
             room_id=str(message.room_id),
             message_id=message_id,
             deletion_type=str(deletion_type),
             deleted_by=str(current_user.id)
         )
-    
+
     return {"message": "Message deleted successfully", "deletion_type": str(deletion_type)}
+
 
 @router.delete("/rooms/{room_id}/messages/clear")
 async def clear_room_messages(
@@ -286,13 +235,10 @@ async def clear_room_messages(
     current_user: UserModel = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Hide all messages in a room for the current user"""
-    
-    # Verify room exists
     room = db.query(RoomModel).filter(RoomModel.id == room_id).first()
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
-    
+
     # Check membership for private rooms
     if room.is_private:
         member = db.query(RoomMemberModel).filter(
@@ -302,27 +248,19 @@ async def clear_room_messages(
         if not member:
             raise HTTPException(status_code=403, detail="Not a member of this room")
 
-    # Get all message IDs in this room
-    message_ids = db.query(MessageModel.id).filter(
-        MessageModel.room_id == room_id
-    ).all()
-    
+    message_ids = db.query(MessageModel.id).filter(MessageModel.room_id == room_id).all()
+
     count = 0
-    # Create hidden_message records for messages not already hidden
     for (msg_id,) in message_ids:
         existing = db.query(HiddenMessageModel).filter(
             HiddenMessageModel.message_id == msg_id,
             HiddenMessageModel.user_id == current_user.id
         ).first()
-        
+
         if not existing:
-            hidden_msg = HiddenMessageModel(
-                message_id=msg_id,
-                user_id=current_user.id
-            )
+            hidden_msg = HiddenMessageModel(message_id=msg_id, user_id=current_user.id)
             db.add(hidden_msg)
             count += 1
-    
+
     db.commit()
-    
     return {"message": f"Cleared {count} messages from room"}

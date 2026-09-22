@@ -1,11 +1,9 @@
-
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status, Depends
+﻿from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from jose import jwt, JWTError
 from datetime import datetime
 import json
-import asyncio
 
 from app.core.moderation import profanity_filter, rate_limiter
 from app.schemas.message import MessageType
@@ -17,10 +15,8 @@ from app.core.websocket_manager import manager
 
 router = APIRouter()
 
-# Authenticate WebSocket connection
+
 def get_token_user(token: str, db: Session) -> Optional[UserModel]:
-    """Authenticate WebSocket connection using token"""
-    
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
         token_data = TokenPayload(**payload)
@@ -28,43 +24,37 @@ def get_token_user(token: str, db: Session) -> Optional[UserModel]:
             return None
     except:
         return None
-    
+
     user = db.query(UserModel).filter(UserModel.id == token_data.sub).first()
-    
     if not user or not user.is_active:
         return None
-    
+
     # Update last seen
     user.last_seen = datetime.utcnow()
     db.commit()
-    
+
     return user
 
+
 @router.websocket("/ws/{room_id}")
-async def websocket_endpoint(
-    websocket: WebSocket,
-    room_id: str,
-    token: str = Query(...),
-):
-    """WebSocket endpoint for real-time chat in a room"""
-    # Get a database session
+async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Query(...)):
     db_gen = get_db()
     db = next(db_gen)
-    
+
     try:
         # Authenticate user
         user = get_token_user(token, db)
         if not user:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
-        
+
         # Check room exists
         room = db.query(RoomModel).filter(RoomModel.id == room_id).first()
         if not room:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
-        
-        # Check if user is a member of the room (required for private rooms)
+
+        # Check membership for private rooms
         if room.is_private:
             member = db.query(RoomMemberModel).filter(
                 RoomMemberModel.room_id == room_id,
@@ -73,13 +63,11 @@ async def websocket_endpoint(
             if not member:
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                 return
-        
-        # Accept connection
+
         await manager.connect(websocket, room_id, str(user.id))
-        
-        # Track session start time
+
         session_start_time = datetime.utcnow()
-        
+
         try:
             while True:
                 # Check if communications are paused
@@ -92,19 +80,17 @@ async def websocket_endpoint(
                     data = await websocket.receive_text()
                     continue
 
-                # Receive message from WebSocket
                 data = await websocket.receive_text()
-                
+
                 try:
                     message_data = json.loads(data)
-                    
-                    # Handle different types of WebSocket messages
+
                     if "type" in message_data:
                         # Typing status update
                         if message_data["type"] == "typing":
                             is_typing = message_data.get("is_typing", False)
                             await manager.set_typing_status(room_id, str(user.id), is_typing)
-                        
+
                         # New message
                         elif message_data["type"] == "message":
                             if not rate_limiter.check_rate_limit(str(user.id), settings.RATE_LIMIT_MESSAGES_PER_MINUTE):
@@ -113,19 +99,18 @@ async def websocket_endpoint(
                                     "message": f"Rate limit exceeded. Maximum {settings.RATE_LIMIT_MESSAGES_PER_MINUTE} messages per minute."
                                 })
                                 continue
-                            
+
                             content = message_data.get("content", "")
-                            
                             is_encrypted = message_data.get("is_encrypted", False)
                             incoming_type = message_data.get("message_type", "text")
-                            
+
                             if is_encrypted:
                                 message_type = MessageType.ENCRYPTED
                             elif incoming_type in ["image", "file", "video", "audio"]:
                                 message_type = incoming_type
                             else:
                                 message_type = MessageType.TEXT
-                            
+
                             if not is_encrypted and message_type == MessageType.TEXT:
                                 if len(content) > settings.MAX_MESSAGE_LENGTH:
                                     await websocket.send_json({
@@ -133,10 +118,10 @@ async def websocket_endpoint(
                                         "message": f"Message too long. Maximum {settings.MAX_MESSAGE_LENGTH} characters allowed."
                                     })
                                     continue
-                                
+
                                 if profanity_filter.contains_profanity(content):
                                     content = profanity_filter.censor_text(content)
-                            
+
                             message = MessageModel(
                                 content=content,
                                 user_id=user.id,
@@ -147,7 +132,7 @@ async def websocket_endpoint(
                             db.add(message)
                             db.commit()
                             db.refresh(message)
-                            
+
                             msg_data = {
                                 "type": "message",
                                 "message_id": str(message.id),
@@ -163,29 +148,18 @@ async def websocket_endpoint(
                                 "created_at": message.created_at.isoformat(),
                                 "is_encrypted": is_encrypted
                             }
-                                
-                            await manager.broadcast_to_room(
-                                room_id=room_id,
-                                message=msg_data
-                            )
+
+                            await manager.broadcast_to_room(room_id=room_id, message=msg_data)
+
                 except json.JSONDecodeError:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": "Invalid message format"
-                    })
+                    await websocket.send_json({"type": "error", "message": "Invalid message format"})
                 except Exception as e:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": str(e)
-                    })
-        
+                    await websocket.send_json({"type": "error", "message": str(e)})
+
         except WebSocketDisconnect:
-            # Calculate session duration
             session_duration = (datetime.utcnow() - session_start_time).total_seconds()
-            
-            # Update user's total active time
+
             try:
-                # Re-fetch user to ensure attached to session
                 db_user = db.query(UserModel).filter(UserModel.id == user.id).first()
                 if db_user:
                     db_user.total_active_time = (db_user.total_active_time or 0) + int(session_duration)
